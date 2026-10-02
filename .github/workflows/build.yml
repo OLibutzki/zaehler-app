@@ -3,6 +3,10 @@ name: APK bauen
 on:
   push:
     branches: [main]
+    # Nur bauen, wenn sich die Android-App geaendert hat.
+    paths-ignore:
+      - "uhr/**"
+      - "**.md"
   workflow_dispatch:
 
 permissions:
