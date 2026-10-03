@@ -4,16 +4,24 @@ import * as display from '@zos/display'
 import { LocalStorage } from '@zos/storage'
 import { replace } from '@zos/router'
 import { onKey, offKey, KEY_HOME, KEY_SHORTCUT, KEY_EVENT_CLICK } from '@zos/interaction'
+import { Vibrator, VIBRATOR_SCENE_DURATION } from '@zos/sensor'
 
 const DEFAULT_COLOR_TOP = 0x00e0a0
 const DEFAULT_COLOR_BOTTOM = 0xffa030
 const RESET_CONFIRM_MS = 3000
+// Nach einem gezaehlten Druck ist dieselbe Taste so lange gesperrt.
+const LOCK_MS = 5000
+// Laenge des Vibrationsimpulses, der einen gezaehlten Druck bestaetigt.
+const BUZZ_MS = 250
 
 let storage = null
 let counts = { top: 0, bottom: 0 }
 let colors = { top: DEFAULT_COLOR_TOP, bottom: DEFAULT_COLOR_BOTTOM }
 let lightOn = false
 let resetArmedAt = 0
+let lastCountAt = { top: 0, bottom: 0 }
+let vibrator = null
+let buzzTimer = null
 let topWidget = null
 let bottomWidget = null
 let hintWidget = null
@@ -112,14 +120,46 @@ function setLight(on) {
   }
 }
 
+// Kurzer, deutlich spuerbarer Impuls: starke Dauervibration, nach BUZZ_MS abgebrochen.
+function buzz() {
+  try {
+    if (!vibrator) vibrator = new Vibrator()
+    try {
+      vibrator.stop()
+    } catch (e) {}
+    try {
+      vibrator.setMode(VIBRATOR_SCENE_DURATION)
+    } catch (e) {}
+    vibrator.start()
+    if (buzzTimer) clearTimeout(buzzTimer)
+    buzzTimer = setTimeout(() => {
+      buzzTimer = null
+      try {
+        vibrator.stop()
+      } catch (e) {}
+    }, BUZZ_MS)
+  } catch (e) {}
+}
+
 function keyCallback(key, keyEvent) {
   try {
     if (keyEvent === KEY_EVENT_CLICK) {
-      if (key === KEY_HOME) counts.top += 1
-      else if (key === KEY_SHORTCUT) counts.bottom += 1
-      else return true
+      const which = key === KEY_HOME ? 'top' : key === KEY_SHORTCUT ? 'bottom' : ''
+      if (!which) return true
+
+      // Doppelte Betaetigung: innerhalb der Sperrzeit weder zaehlen noch vibrieren.
+      const now = Date.now()
+      const since = now - lastCountAt[which]
+      if (since >= 0 && since < LOCK_MS) {
+        hint((which === 'top' ? 'oben' : 'unten') + ' gesperrt, nicht gezaehlt')
+        return true
+      }
+
+      lastCountAt[which] = now
+      counts[which] += 1
       resetArmedAt = 0
       show()
+      buzz()
       if (save()) defaultHint()
     }
   } catch (e) {
@@ -224,6 +264,7 @@ Page({
           resetArmedAt = 0
           counts.top = 0
           counts.bottom = 0
+          lastCountAt = { top: 0, bottom: 0 }
           show()
           if (save()) hint('zurueckgesetzt')
         } else {
@@ -266,6 +307,10 @@ Page({
 
   onDestroy() {
     save()
+    try {
+      if (buzzTimer) clearTimeout(buzzTimer)
+      if (vibrator) vibrator.stop()
+    } catch (e) {}
     try {
       offKey()
     } catch (e) {}
